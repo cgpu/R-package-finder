@@ -1,0 +1,202 @@
+---
+title: "Fetching R packages relevant to ```ceRNA```, ```lnRNA``` using the ```githubinstall::gh_search_packages()``` function"
+author: ""
+date: ""
+output: 
+  html_document:
+    toc: true                  # table of content true
+    toc_depth: 3               # upto three depths of headings (specified by #, ## and ###)
+    toc_float: true
+    number_sections: false     # if you want number sections at each table header
+    theme: united              # many options for theme, this one is my favorite.
+    highlight: tango           # specifies the syntax highlighting style
+    #css: my.css               # you can add your custom css, should be in same folder
+---
+
+# The R package ```githubinstall```
+
+```R packages``` offer a convenient way to share analytical pipelines amongst researchers. The __Comprehensive R Archive Network__ ,[CRAN]() and the more specialized repository for bioinformatics analyses, [Bioconductor](https://bioconductor.org/) host a plethora of bioinformatics related R packages. An efficient way to access R packages of interest without having to employ sophisticated text mining pipelines, is an R package that __"detects"__ user specified keywords of interest, (eg. ```RNA```, ```transcript```, ```lnRNA```) and searches for occurence of them in the R package descriptions, via GitHub. That R package is ```githubinstall```. We will use it to search and find ```RNA``` for example related R packages.
+ 
+
+The function ```gh_search_packages()``` returns the list of R package repositories on GitHub, which include in their description a user defined #keyword. 
+
+In this report we will:
+
+1. Store all relevant keywords that we want to search for in a vector named ```bag_of_keywords```
+2. Initialize an empty dataframe named ```keyword_packages_df``` with 3 columns and 0 rows. This will be extended by merging the output of the ```gh_search_packages()``` function call on each keyword.
+3. For each keyword in the ```bag_of_keywords```, we will use the ```githubinstall::gh_search_packages()``` function to retrieve information for those packages. The output is a dataframe with the following 3 columns.
+    
+        a. The developer's GitHub ```username```<br>
+        b. The R ```package name```<br>
+        c. The R package ```title```<br>
+4. We will temporarily store in a dataframe named ```temp_df``` the output for each keyword.
+5. In each iteration we will merge the ```keyword_packages_df``` and ```temp_df``` to have a collective dataframe with the packages found with all the keywords. Since the keywords are most likely correlated, the same package might come up from the use of two different  keywords. To drop duplicate rows we are using the ```dplyr::full_join()``` function.
+6. We will recontruct the GitHub url hyperlinks to preview in an interactive ```DT::datatable```
+
+Then we can preview the returned packages of interest :)
+
+  
+#Taking care of R package dependencies with [```pacman```](https://cran.r-project.org/web/packages/pacman/vignettes/Introduction_to_pacman.html)
+
+(Down)loading generic dependencies for parsing, formatting, data manipulation:
+
+```{r}
+# Install pacman once
+if (!require("pacman")) install.packages("pacman")
+
+# Install evrything else with pacman; 
+# no need to first install, then load with library()
+# p_load automatically does that 
+pacman::p_load("DT",
+               "devtools",
+               "tidyr",
+               "sessioninfo",
+               "dplyr")
+```
+
+
+# [```githubinstall```](https://cran.r-project.org/web/packages/githubinstall/vignettes/githubinstall.html): 3.4. Search Packages by a Keyword
+
+```{r}
+pacman::p_load("githubinstall")
+```
+
+
+```{r, echo=FALSE, warning=FALSE,message=FALSE}
+# Search Packages by a Keyword, in this example we search for 
+
+bag_of_keywords <- c(
+                    "ceRNA",
+                    "lnRNA",
+                    "transcript"
+                    ) 
+```
+
+
+# initializing the dataframe that will store the fetched packages info
+
+```{r}
+# Initialize dataframe with 3 columns as returned by `githubinstall::gh_search_packages`
+library(githubinstall)
+
+# Test call to function, to return the output dataframe and grab the colnames
+# keyword is irrelevant here so we use the generic "to"
+function_return_object        <- githubinstall::gh_search_packages("to")
+nColumns_return_object        <- length(colnames(function_return_object))
+
+# Initializing the dataframe where the retrieve package info will be stored 
+keyword_packages_df           <- data.frame(matrix(data = NA, 
+                                                   ncol = nColumns_return_object, 
+                                                   nrow = 0))
+
+#Name initialized dataframe's columns after the function_return_object
+colnames(keyword_packages_df) <- colnames(function_return_object)
+
+# Convert all elements to chr type from logi, or else the full_join() cannot be performed
+keyword_packages_df[, ] <- lapply(keyword_packages_df[, ], as.character)
+
+# Check: should have colnames, 0 rows
+head(keyword_packages_df)
+
+# Check: everything should be of type chr
+str(keyword_packages_df)
+
+```
+
+# Looping over each keyword and collecting info for packages
+
+```{r}
+for (keyword_index in 1:length(bag_of_keywords)){
+  
+  # Each single keyword's dataframe of packages
+  temp_df    <- githubinstall::gh_search_packages(bag_of_keywords[keyword_index], 
+                                                  ignore.case = TRUE)
+  
+  # Start growing the dataframe that will hold all the keywords packages
+  keyword_packages_df <- dplyr::full_join(temp_df, keyword_packages_df)
+}
+```
+
+
+# Preview the collective dataframe with the retrieved packages 
+
+How many R packages with any of the keywords in their description?
+```{R}
+dim(keyword_packages_df)[1]
+```
+
+## Preview of returned dataframe:
+
+Using the [```DT```](https://rstudio.github.io/DT/) library  for interactive datatables
+
+```{r}
+DT::datatable(keyword_packages_df[,-1], # the -1 to omit the username in the output table
+              escape = FALSE,
+              filter = 'bottom')
+   
+```
+
+
+
+# Reconstructing the R package GitHub repo url for clickable links
+    
+We will recontruct the string with the above pattern for all found packages, and add the html tag for redirecting
+so the pattern to recreate should look like this:
+
+     "<a href=  'https://github.com/HajkD/myTAI'/ target='blank' > myTAI </a>"
+     
+     "<a href= 'https://github.com/" : Opening html redirection tag + the constant part of the github URL
+     HajkD: the username of the developer (keyword_packages_df$username)   
+     /
+     myTAI: the R package name of the developer (keyword_packages_df$package_name) in the URL
+     '/ 
+     target='blank' > : to open links in new tab
+     myTAI : the text of the hyperlink
+     </a>"
+
+```{r}
+
+# Mutate aka reform the package names to be clickable links:
+
+keyword_packages_df$package_name <- paste0("<a href='https://github.com/",
+                                         keyword_packages_df$username, 
+                                         "/",
+                                         keyword_packages_df$package_name, 
+                                         "'/",
+                                         "target='blank",
+                                         "'>",
+                                         keyword_packages_df$package_name, 
+                                         "</a>")
+
+```
+
+# Updated datatable with clickable links 
+
+```{r}
+DT::datatable(keyword_packages_df[,-1], # the -1 to omit the username in the output table
+              escape = FALSE,
+              filter = 'bottom'
+              )
+```
+
+
+# Session info for package version control management
+
+```{r}
+sessioninfo::session_info()
+```
+
+
+# Appendix:
+
+##  An example for how ```dplyr::full_join()``` it works:
+```{r}
+(df1 <- iris[48:51,1:5])
+dim(df1)
+(df2 <- iris[48:53,1:5])
+dim(df2)
+
+(merged_df <- rbind(df1,df2))
+
+dplyr::full_join(df2,df1)
+```
